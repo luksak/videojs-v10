@@ -799,4 +799,60 @@ v2/prog_index.m3u8
       expect(allTextTracks[0]?.url).toContain('s1/en/prog_index.m3u8');
     });
   });
+
+  describe('bare Media Playlist handed directly as src', () => {
+    it('synthesizes a single implicit audio track for a fMP4 Media Playlist with no variant tags', () => {
+      const text = `#EXTM3U
+#EXT-X-VERSION:6
+#EXT-X-TARGETDURATION:4
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXT-X-MAP:URI="init.mp4"
+#EXTINF:4.0,
+segment-0.mp4
+#EXT-X-ENDLIST`;
+
+      const result = parseMultivariantPlaylist(text, { url: baseUrl });
+
+      const audioSet = result.selectionSets.find((s) => s.type === 'audio');
+
+      expect(audioSet).toBeDefined();
+      expect(result.selectionSets).toHaveLength(1);
+
+      const audioTracks = audioSet!.switchingSets.flatMap((ss) => ss.tracks) as PartiallyResolvedAudioTrack[];
+
+      expect(audioTracks).toHaveLength(1);
+      expect(audioTracks[0]).toMatchObject({
+        type: 'audio',
+        url: baseUrl,
+        mimeType: 'audio/mp4',
+        codecs: ['mp4a.40.2'],
+        default: true,
+        autoselect: true,
+      });
+      expect(typeof audioTracks[0]?.id).toBe('string');
+    });
+
+    it('does not synthesize a track for an actual empty/unsupported-tags-only playlist', () => {
+      const text = `#EXTM3U
+#EXT-X-VERSION:7`;
+
+      const result = parseMultivariantPlaylist(text, { url: baseUrl });
+
+      expect(result.selectionSets).toHaveLength(0);
+    });
+
+    it('prefers an explicit Multivariant Playlist over the bare-Media-Playlist heuristic', () => {
+      const text = `#EXTM3U
+#EXT-X-STREAM-INF:BANDWIDTH=800000
+video.m3u8`;
+
+      const result = parseMultivariantPlaylist(text, { url: baseUrl });
+
+      expect(result.selectionSets.find((s) => s.type === 'audio')).toBeUndefined();
+
+      const videoSet = result.selectionSets.find((s) => s.type === 'video');
+
+      expect(videoSet?.switchingSets[0]?.tracks).toHaveLength(1);
+    });
+  });
 });

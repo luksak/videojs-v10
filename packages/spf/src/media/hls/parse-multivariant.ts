@@ -22,6 +22,16 @@ import { matchTag, parseCodecs } from './parse-attributes';
 import { resolveUrl } from './resolve-url';
 
 /**
+ * Whether `text` looks like an HLS Media Playlist (segments) rather than a Multivariant Playlist (variants/renditions).
+ * A Media Playlist handed to this parser directly as `src` carries none of the tags this function scans for
+ * (`#EXT-X-STREAM-INF`, `#EXT-X-MEDIA`) — without this check it silently resolves to a Presentation with no selection
+ * sets. See `looksLikeMediaPlaylist`'s call site below.
+ */
+function looksLikeMediaPlaylist(text: string): boolean {
+  return /^#EXTINF:/m.test(text) || /^#EXT-X-TARGETDURATION:/m.test(text);
+}
+
+/**
  * Parse HLS multivariant playlist into a Presentation.
  *
  * Returns Presentation with partially resolved tracks (no segment information). Tracks contain metadata from
@@ -380,6 +390,39 @@ export function parseMultivariantPlaylist(text: string, unresolved: AddressableO
 
   // Combine audio tracks from both EXT-X-MEDIA renditions and audio-only STREAM-INF
   const audioTracks = [...audioRenditionTracks, ...audioOnlyTracks];
+
+  // Some HLS sources hand this parser a bare Media Playlist directly as `src`,
+  // with no `#EXT-X-STREAM-INF` / `#EXT-X-MEDIA` wrapper — a single audio-only
+  // stream with no ABR ladder has nothing to vary, so some packagers skip the
+  // Multivariant Playlist entirely. When nothing variant-shaped was found but the
+  // text looks like a Media Playlist, synthesize a single implicit audio track
+  // pointing at the same URL so `resolveAudioTrack` fetches and parses it as a
+  // Media Playlist like any other selected track. The codec is assumed AAC-LC
+  // (`mp4a.40.2`) — the overwhelmingly common case for fMP4 HLS audio — since a
+  // Media Playlist alone carries no CODECS info to read.
+  if (
+    streams.length === 0 &&
+    audioRenditions.length === 0 &&
+    audioTracks.length === 0 &&
+    looksLikeMediaPlaylist(text)
+  ) {
+    const track: PartiallyResolvedAudioTrack = {
+      type: 'audio' as const,
+      id: generateId(),
+      url: unresolved.url,
+      groupId: 'default',
+      name: 'Default',
+      mimeType: 'audio/mp4',
+      bandwidth: 0,
+      sampleRate: 48000,
+      channels: 2,
+      codecs: ['mp4a.40.2'],
+      default: true,
+      autoselect: true,
+    };
+
+    audioTracks.push(track);
+  }
 
   // Build PartiallyResolvedTextTracks from subtitle renditions
   const textTracks: PartiallyResolvedTextTrack[] = subtitleRenditions.map((rendition) => {
